@@ -1,4 +1,5 @@
 import defaultValue from "../Core/defaultValue.js";
+import Cartesian2 from "../Core/Cartesian2.js";
 
 // https://stackoverflow.com/a/2049593
 function sign(ax, ay, bx, by, cx, cy) {
@@ -6,7 +7,7 @@ function sign(ax, ay, bx, by, cx, cy) {
 }
 
 /**
- * Detect if a point is inside of a traingle.
+ * Detect if a point is inside of a triangle.
  * @param {Number} px x location of point to test
  * @param {Number} py y location of point to test
  * @param {Number} ax x position of first triangle vertex
@@ -139,14 +140,16 @@ function doesTriangleOverlapRect(rect, ax, ay, bx, by, cx, cy) {
  * representing the clipping mesh. The bounding box is always 2D in nature,
  * so use `numComponents`, `xIndex` and `yIndex` to choose which dimensions
  * should be looked at to varruct the bounding box.
- * @param {Array.<Number>} option.indices Triangle index data corresponding
+ * @param {Array.<Number>} options.indices Triangle index data corresponding
  * to the positions data.
- * @param {Number} [option.numComponents-3] The location of the x channel in
+ * @param {Number} [options.numComponents-3] The location of the x channel in
  * the position data.
- * @param {Number} [option.xIndex-0] The location of the x channel in the
+ * @param {Number} [options.xIndex-0] The location of the x channel in the
  * position data data. e.g 0 for XYZ data
- * @param {Number} [option.yIndex-1] The location of the y channel in the
+ * @param {Number} [options.yIndex-1] The location of the y channel in the
  * positional data.
+ *
+ * @private
  */
 
 function ClippingBoundingBox2D(options) {
@@ -190,6 +193,15 @@ function ClippingBoundingBox2D(options) {
   this.width = this.topRight.x - this.topLeft.x;
   this.height = this.topRight.y - this.btmRight.y;
 }
+
+ClippingBoundingBox2D.prototype.toClockwiseCartesian2Pairs = function () {
+  return [
+    new Cartesian2(this.topLeft.x, this.topLeft.y),
+    new Cartesian2(this.topRight.x, this.topRight.y),
+    new Cartesian2(this.btmRight.x, this.btmRight.y),
+    new Cartesian2(this.btmLeft.x, this.btmLeft.y),
+  ];
+};
 
 ClippingBoundingBox2D.prototype.toClockwiseFloat32Array = function () {
   return Float32Array.of(
@@ -250,9 +262,11 @@ PolygonClippingAccelerationGrid.CellOcclusion = {
  * positional data. e.g 0 for XYZ data
  * @param {Number} [options.yIndex-1] The location of the y channel in your
  * positional data.
+ *
+ * @private
  */
 function PolygonClippingAccelerationGrid(options) {
-  this.overlappingTriangleIndices = new Float32Array();
+  this.overlappingTriangleIndices = undefined;
 
   var positions = options.positions;
   var indices = options.indices;
@@ -339,7 +353,7 @@ function PolygonClippingAccelerationGrid(options) {
 
       var cellIndex = (row * this.numCols + col) * cellNumElements;
 
-      // if the cell is indetermiant we record all the overlapping
+      // if the cell is indeterminate we record all the overlapping
       // triangles and
       if (cellIsIndeterminant) {
         this.grid[cellIndex] =

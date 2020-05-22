@@ -22,6 +22,10 @@ varying vec3 v_textureCoordinates;
 varying vec3 v_normalMC;
 varying vec3 v_normalEC;
 
+#ifdef ENABLE_CLIPPING_POLYGON
+varying vec3 v_positionECEF;
+#endif
+
 #ifdef APPLY_MATERIAL
 varying float v_slope;
 varying float v_aspect;
@@ -157,6 +161,10 @@ void main()
 
     vec3 position3DWC = position + u_center3D;
     gl_Position = getPosition(position, height, textureCoordinates);
+
+    #ifdef ENABLE_CLIPPING_POLYGON
+    v_positionECEF = position3DWC;
+    #endif
 
     v_textureCoordinates = vec3(textureCoordinates, webMercatorT);
 

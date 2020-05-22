@@ -4,6 +4,7 @@ import TerrainQuantization from "../Core/TerrainQuantization.js";
 import ShaderProgram from "../Renderer/ShaderProgram.js";
 import getClippingFunction from "./getClippingFunction.js";
 import SceneMode from "./SceneMode.js";
+import getClippingPolygonFunctions from "./getPolygonClippingFunction.js";
 
 function GlobeSurfaceShader(
   numberOfDayTextures,
@@ -93,7 +94,9 @@ GlobeSurfaceShaderSet.prototype.getShaderProgram = function (options) {
   var useWebMercatorProjection = options.useWebMercatorProjection;
   var enableFog = options.enableFog;
   var enableClippingPlanes = options.enableClippingPlanes;
+  var enableClippingPolygon = options.enableClippingPolygon;
   var clippingPlanes = options.clippingPlanes;
+  var clippingPolygon = options.clippingPolygon;
   var clippedByBoundaries = options.clippedByBoundaries;
   var hasImageryLayerCutout = options.hasImageryLayerCutout;
   var colorCorrect = options.colorCorrect;
@@ -153,14 +156,22 @@ GlobeSurfaceShaderSet.prototype.getShaderProgram = function (options) {
     (colorCorrect << 23) |
     (highlightFillTile << 24) |
     (colorToAlpha << 25) |
-    (showUndergroundColor << 26);
+    (showUndergroundColor << 26) |
+    (enableClippingPolygon << 27);
 
   var currentClippingShaderState = 0;
+  var useClippingPolygon = 0;
+
   if (defined(clippingPlanes) && clippingPlanes.length > 0) {
     currentClippingShaderState = enableClippingPlanes
       ? clippingPlanes.clippingPlanesState
       : 0;
   }
+
+  if (defined(clippingPolygon)) {
+    useClippingPolygon = true;
+  }
+
   var surfaceShader = surfaceTile.surfaceShader;
   if (
     defined(surfaceShader) &&
@@ -187,6 +198,10 @@ GlobeSurfaceShaderSet.prototype.getShaderProgram = function (options) {
     // Cache miss - we've never seen this combination of numberOfDayTextures and flags before.
     var vs = this.baseVertexShaderSource.clone();
     var fs = this.baseFragmentShaderSource.clone();
+
+    if (enableClippingPolygon) {
+      fs.sources.unshift(getClippingPolygonFunctions());
+    }
 
     if (currentClippingShaderState !== 0) {
       fs.sources.unshift(
@@ -272,6 +287,11 @@ GlobeSurfaceShaderSet.prototype.getShaderProgram = function (options) {
 
     if (enableClippingPlanes) {
       fs.defines.push("ENABLE_CLIPPING_PLANES");
+    }
+
+    if (enableClippingPolygon) {
+      fs.defines.push("ENABLE_CLIPPING_POLYGON");
+      vs.defines.push("ENABLE_CLIPPING_POLYGON");
     }
 
     if (colorCorrect) {

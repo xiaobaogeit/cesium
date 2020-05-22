@@ -164,6 +164,14 @@ function GlobeSurfaceTileProvider(options) {
   this._clippingPlanes = undefined;
 
   /**
+   * A property specifying a {@alink ClippingPolygon} used to selectively
+   * disable rendering inside or outside of the clipping polygon
+   * @type {ClippingPolygon}
+   * @private
+   */
+  this._clippingPolygon = undefined;
+
+  /**
    * A property specifying a {@link Rectangle} used to selectively limit terrain and imagery rendering.
    * @type {Rectangle}
    */
@@ -312,6 +320,24 @@ Object.defineProperties(GlobeSurfaceTileProvider.prototype, {
       ClippingPlaneCollection.setOwner(value, this, "_clippingPlanes");
     },
   },
+
+  /**
+   * The {@link ClippingPolygon} used to selectively enable or disable
+   * rendering inside of a specific region
+   *
+   * @type {ClippingPlaneCollection}
+   *
+   * @private
+   */
+  clippingPolygon: {
+    get: function () {
+      return this._clippingPolygon;
+    },
+    set: function (value) {
+      this._clippingPolygon = value;
+      //ClippingPolygon.setOwner(value, this, "_clippingPolygon");
+    },
+  },
 });
 
 function sortTileImageryByLayerIndex(a, b) {
@@ -401,6 +427,13 @@ GlobeSurfaceTileProvider.prototype.beginUpdate = function (frameState) {
   if (defined(clippingPlanes) && clippingPlanes.enabled) {
     clippingPlanes.update(frameState);
   }
+
+  // create clipping polygon if DNE
+  var clippingPolygon = this._clippingPolygon;
+  if (defined(clippingPolygon)) {
+    clippingPolygon.update(frameState);
+  }
+
   this._usedDrawCommands = 0;
 
   this._hasLoadedTilesThisFrame = false;
@@ -1606,6 +1639,79 @@ function createTileUniformMap(frameState, globeSurfaceTileProvider) {
       style.alpha = this.properties.clippingPlanesEdgeWidth;
       return style;
     },
+
+    u_clippingPolygonAccelerationGrid: function () {
+      var clippingPolygon = globeSurfaceTileProvider._clippingPolygon;
+      if (defined(clippingPolygon) && defined(clippingPolygon.gridTexture)) {
+        return clippingPolygon.gridTexture;
+      }
+    },
+
+    u_clippingPolygonAccelerationGridNumPixels: function () {
+      var clippingPolygon = globeSurfaceTileProvider._clippingPolygon;
+      if (defined(clippingPolygon) && defined(clippingPolygon.gridNumPixels)) {
+        return clippingPolygon.gridNumPixels;
+      }
+    },
+
+    u_clippingPolygonMeshPositions: function () {
+      var clippingPolygon = globeSurfaceTileProvider._clippingPolygon;
+      if (defined(clippingPolygon) && defined(clippingPolygon.meshPositions)) {
+        return clippingPolygon.meshPositionsTexture;
+      }
+    },
+
+    u_clippingPolygonMeshPositionsNumPixels: function () {
+      var clippingPolygon = globeSurfaceTileProvider._clippingPolygon;
+      if (
+        defined(clippingPolygon) &&
+        defined(clippingPolygon.meshPositionsNumPixels)
+      ) {
+        return clippingPolygon.meshPositionsNumPixels;
+      }
+    },
+
+    u_clippingPolygonOverlappingTriangleIndices: function () {
+      var clippingPolygon = globeSurfaceTileProvider._clippingPolygon;
+      if (
+        defined(clippingPolygon) &&
+        defined(clippingPolygon.overlappingTriangleIndicesTexture)
+      ) {
+        return clippingPolygon.overlappingTriangleIndicesTexture;
+      }
+    },
+
+    u_clippingPolygonOverlappingTriangleIndicesNumPixels: function () {
+      var clippingPolygon = globeSurfaceTileProvider._clippingPolygon;
+      if (
+        defined(clippingPolygon) &&
+        defined(clippingPolygon.overlappingTriangleIndicesNumPixels)
+      ) {
+        return clippingPolygon.overlappingTriangleIndicesNumPixels;
+      }
+    },
+
+    u_clippingPolygonBoundingBox: function () {
+      var clippingPolygon = globeSurfaceTileProvider._clippingPolygon;
+      if (defined(clippingPolygon) && defined(clippingPolygon.boundingBox)) {
+        return clippingPolygon.boundingBox;
+      }
+    },
+
+    u_clippingPolygonCellDimensions: function () {
+      var clippingPolygon = globeSurfaceTileProvider._clippingPolygon;
+      if (defined(clippingPolygon) && defined(clippingPolygon.cellDimensions)) {
+        return clippingPolygon.cellDimensions;
+      }
+    },
+
+    u_clippingPolygonNumRowsAndCols: function () {
+      var clippingPolygon = globeSurfaceTileProvider._clippingPolygon;
+      if (defined(clippingPolygon) && defined(clippingPolygon.numRowsAndCols)) {
+        return clippingPolygon.numRowsAndCols;
+      }
+    },
+
     u_minimumBrightness: function () {
       return frameState.fog.minimumBrightness;
     },
@@ -1854,6 +1960,7 @@ var surfaceShaderSetOptionsScratch = {
   useWebMercatorProjection: undefined,
   enableFog: undefined,
   enableClippingPlanes: undefined,
+  enableClippingPolygon: undefined,
   clippingPlanes: undefined,
   clippedByBoundaries: undefined,
   hasImageryLayerCutout: undefined,
@@ -1974,6 +2081,10 @@ function addDrawCommandsForTile(tileProvider, tile, frameState) {
     defined(tileProvider.clippingPlanes) &&
     tileProvider.clippingPlanes.enabled
   ) {
+    --maxTextures;
+  }
+
+  if (defined(tileProvider.clippingPolygon)) {
     --maxTextures;
   }
 
@@ -2418,6 +2529,10 @@ function addDrawCommandsForTile(tileProvider, tile, frameState) {
       uniformMapProperties.clippingPlanesEdgeWidth = clippingPlanes.edgeWidth;
     }
 
+    // update clipping polygon
+    var clippingPolygon = tileProvider._clippingPolygon;
+    var clippingPolygonEnabled = defined(clippingPolygon);
+
     if (defined(tileProvider.uniformMap)) {
       uniformMap = combine(uniformMap, tileProvider.uniformMap);
     }
@@ -2432,7 +2547,9 @@ function addDrawCommandsForTile(tileProvider, tile, frameState) {
     surfaceShaderSetOptions.applySplit = applySplit;
     surfaceShaderSetOptions.enableFog = applyFog;
     surfaceShaderSetOptions.enableClippingPlanes = clippingPlanesEnabled;
+    surfaceShaderSetOptions.enableClippingPolygon = clippingPolygonEnabled;
     surfaceShaderSetOptions.clippingPlanes = clippingPlanes;
+    surfaceShaderSetOptions.clippingPolygon = clippingPolygon;
     surfaceShaderSetOptions.hasImageryLayerCutout = applyCutout;
     surfaceShaderSetOptions.colorCorrect = colorCorrect;
     surfaceShaderSetOptions.highlightFillTile = highlightFillTile;

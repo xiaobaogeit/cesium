@@ -72,6 +72,28 @@ uniform mat4 u_clippingPlanesMatrix;
 uniform vec4 u_clippingPlanesEdgeStyle;
 #endif
 
+#ifdef ENABLE_CLIPPING_POLYGON
+uniform vec2 u_clippingPolygonBoundingBox[4];
+uniform vec2 u_clippingPolygonCellDimensions;
+uniform vec2 u_clippingPolygonNumRowsAndCols;
+uniform sampler2D u_clippingPolygonAccelerationGrid;
+uniform sampler2D u_clippingPolygonMeshPositions;
+uniform sampler2D u_clippingPolygonOverlappingTriangleIndices;
+uniform float u_clippingPolygonAccelerationGridNumPixels;
+uniform float u_clippingPolygonMeshPositionsNumPixels;
+uniform float u_clippingPolygonOverlappingTriangleIndicesNumPixels;
+
+#define CLIPPING_POLYGON_BBOX_TOP_LEFT u_clippingPolygonBoundingBox[0]
+#define CLIPPING_POLYGON_BBOX_TOP_RIGHT u_clippingPolygonBoundingBox[1]
+#define CLIPPING_POLYGON_BBOX_BTM_RIGHT u_clippingPolygonBoundingBox[2]
+#define CLIPPING_POLYGON_BBOX_BTM_LEFT u_clippingPolygonBoundingBox[3]
+#define CLIPPING_POLYGON_BBOX_WIDTH (CLIPPING_POLYGON_BBOX_TOP_RIGHT.x - CLIPPING_POLYGON_BBOX_TOP_LEFT.x)
+#define CLIPPING_POLYGON_BBOX_HEIGHT (CLIPPING_POLYGON_BBOX_TOP_RIGHT.y - CLIPPING_POLYGON_BBOX_BTM_RIGHT.y)
+#define CLIPPING_POLYGON_NO_OCCLUSION 1.0
+#define CLIPPING_POLYGON_PARTIAL_OCCLUSION 2.0
+#define CLIPPING_POLYGON_TOTAL_OCCLUSION 3.0
+#endif
+
 #if defined(FOG) && defined(DYNAMIC_ATMOSPHERE_LIGHTING) && (defined(ENABLE_VERTEX_LIGHTING) || defined(ENABLE_DAYNIGHT_SHADING))
 uniform float u_minimumBrightness;
 #endif
@@ -87,6 +109,12 @@ uniform vec4 u_fillHighlightColor;
 #ifdef UNDERGROUND_COLOR
 uniform vec4 u_undergroundColor;
 uniform vec4 u_undergroundColorAlphaByDistance;
+#endif
+
+#ifdef ENABLE_CLIPPING_POLYGON
+// TODO: Very, very high probability this is wrong or not being transformed
+//       in the vertex shader correctly as I'm seeing distortion effects
+varying vec3 v_positionECEF;
 #endif
 
 varying vec3 v_positionMC;
@@ -260,6 +288,111 @@ vec3 computeGroundAtmosphereColor(vec3 fogColor, vec4 finalColor, vec3 atmospher
 #endif
 
 const float fExposure = 2.0;
+#ifdef ENABLE_CLIPPING_POLYGON
+// TODO: Trying to inject this directly in 'GlobeSurfaceShaderSet' causes undefined identifier errors?
+float insideBox(vec2 v, vec2 bottomLeft, vec2 topRight)
+{
+    vec2 s = step(bottomLeft, v) - step(topRight, v);
+    return s.x * s.y;
+}
+
+float scale(float number, float oldMin, float oldMax, float newMin, float newMax)
+{
+    return (((newMax - newMin) * (number - oldMin)) / (oldMax - oldMin)) + newMin;
+}
+
+float sign (vec2 p1, vec2 p2, vec2 p3)
+{
+    return (p1.x - p3.x) * (p2.y - p3.y) - (p2.x - p3.x) * (p1.y - p3.y);
+}
+
+// https://stackoverflow.com/a/2049593
+bool pointInTriangle(vec2 p, vec2 v1, vec2 v2, vec2 v3)
+{
+    float d1, d2, d3;
+    bool has_neg, has_pos;
+
+    d1 = sign(p, v1, v2);
+    d2 = sign(p, v2, v3);
+    d3 = sign(p, v3, v1);
+
+    has_neg = (d1 < 0.0) || (d2 < 0.0) || (d3 < 0.0);
+    has_pos = (d1 > 0.0) || (d2 > 0.0) || (d3 > 0.0);
+
+    return !(has_neg && has_pos);
+}
+
+bool isWorldPositionInsideAnyTriangle(vec2 worldPos, float startIndex, float endIndex)
+{
+    float i = startIndex;
+    int numTrianglesToCheck = int((endIndex - startIndex) / 3.0);
+
+    for (int k = 0; k < 1000; k++)
+    {
+        if  (k >= numTrianglesToCheck)
+        {
+            break;
+        }
+
+        float overlapIndicesPixel = ((i / 3.0) + 0.5) / u_clippingPolygonOverlappingTriangleIndicesNumPixels;
+        vec4 overlapIndices = texture2D(u_clippingPolygonOverlappingTriangleIndices, vec2(overlapIndicesPixel, 0.0));
+        vec3 meshIndices = (overlapIndices.xyz + 0.5) / u_clippingPolygonMeshPositionsNumPixels;
+
+        vec2 v0 = texture2D(u_clippingPolygonMeshPositions, vec2(meshIndices.x, 0.0)).xz;
+        vec2 v1 = texture2D(u_clippingPolygonMeshPositions, vec2(meshIndices.y, 0.0)).xz;
+        vec2 v2 = texture2D(u_clippingPolygonMeshPositions, vec2(meshIndices.z, 0.0)).xz;
+
+        if (pointInTriangle(worldPos, v0, v1, v2))
+        {
+            return true;
+        }
+
+        i += 3.0;
+    }
+
+    return false;
+}
+
+bool clippingPolygon(vec3 worldPos)
+{
+    if (insideBox(worldPos.xy, CLIPPING_POLYGON_BBOX_BTM_LEFT, CLIPPING_POLYGON_BBOX_TOP_RIGHT) <= 0.1)
+    {
+        discard;
+    }
+
+    // ECEF -> 2D Cartesian -> 2D Screen (Origin Top Left) -> 2D Array Index -> 1D Array Index.
+    float screenX = scale(worldPos.x, CLIPPING_POLYGON_BBOX_TOP_LEFT.x, CLIPPING_POLYGON_BBOX_TOP_RIGHT.x, 0.0, CLIPPING_POLYGON_BBOX_WIDTH);
+    // NOTE: Y is intentionally inverted here, as -Y to Y should be flipped to match the table
+    float screenY = scale(worldPos.y, CLIPPING_POLYGON_BBOX_TOP_RIGHT.y, CLIPPING_POLYGON_BBOX_BTM_RIGHT.y, 0.0, CLIPPING_POLYGON_BBOX_HEIGHT);
+    float row = floor(screenY / u_clippingPolygonCellDimensions.y);
+    float col = floor(screenX / u_clippingPolygonCellDimensions.x);
+
+    float numRows = u_clippingPolygonNumRowsAndCols.x;
+    float gridIndex = ((row * numRows) + col);
+    float gridPixel = (gridIndex + 0.5) / u_clippingPolygonAccelerationGridNumPixels;
+    vec3 gridCell = texture2D(u_clippingPolygonAccelerationGrid, vec2(gridPixel, 0.0)).xyz;
+
+    if (gridCell.r == CLIPPING_POLYGON_NO_OCCLUSION)
+    {
+        return false;
+    }
+
+    if (gridCell.r == CLIPPING_POLYGON_TOTAL_OCCLUSION)
+    {
+        discard;
+    }
+
+    if (isWorldPositionInsideAnyTriangle(worldPos.xy, gridCell.g, gridCell.b))
+    {
+        gl_FragColor = vec4(0.0, 0.0, 1.0, 1.0);
+        return true;
+    }
+
+    return false;
+}
+
+
+#endif
 
 void main()
 {
@@ -269,6 +402,13 @@ void main()
         {
             discard;
         }
+#endif
+
+#ifdef ENABLE_CLIPPING_POLYGON
+    if (clippingPolygon(v_positionECEF)) {
+        return;
+    }
+
 #endif
 
 #ifdef ENABLE_CLIPPING_PLANES
